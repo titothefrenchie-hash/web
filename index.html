@@ -2627,116 +2627,59 @@ function selectScanItem(tvSymbol, name, signal) {
   loadChart(tvSymbol, name);
 }
 
-// ─────────────────────────────────────────
-// CHART — Lightweight Charts + 2/3 Indicator
-// ─────────────────────────────────────────
-let lwChart = null, lwCandleSeries = null, lwEma50S = null, lwEma100S = null;
+// Chart state
 let currentChartSymbol = '';
+function initLWChart() {} // stub — chart is TradingView iframe
 
-function initLWChart() {
-  const container = document.getElementById('tv-widget-container');
-  if (!container) return;
-  if (lwChart) { try{lwChart.remove();}catch(e){} lwChart=null; }
-  const LWC = window.LightweightCharts;
-  if (!LWC) { container.innerHTML='<div style="padding:30px;color:#5a7a9a;text-align:center;font-size:11px">Chart library loading…</div>'; return; }
-
-  lwChart = LWC.createChart(container, {
-    layout:{ background:{color:'#0d1117'}, textColor:'#8aa3b8' },
-    grid:{ vertLines:{color:'#1a2430'}, horzLines:{color:'#1a2430'} },
-    rightPriceScale:{ borderColor:'#1e2d40' },
-    timeScale:{ borderColor:'#1e2d40', timeVisible:true },
-    crosshair:{ mode:1 },
-    width: container.clientWidth || 800,
-    height: container.clientHeight || 500,
-  });
-
-  lwCandleSeries = lwChart.addCandlestickSeries({
-    upColor:'#26a69a', downColor:'#ef5350',
-    borderUpColor:'#26a69a', borderDownColor:'#ef5350',
-    wickUpColor:'#26a69a', wickDownColor:'#ef5350',
-  });
-  lwEma50S  = lwChart.addLineSeries({color:'rgba(80,200,120,0.8)', lineWidth:1, priceLineVisible:false, lastValueVisible:false});
-  lwEma100S = lwChart.addLineSeries({color:'rgba(220,80,80,0.8)',  lineWidth:1, priceLineVisible:false, lastValueVisible:false});
-
-  new ResizeObserver(()=>{
-    if (lwChart && container.clientWidth>0)
-      lwChart.applyOptions({width:container.clientWidth, height:container.clientHeight||500});
-  }).observe(container);
-}
-
-async function loadChart(symbol, name) {
+// loadChart: Updates TradingView iframe to show the clicked coin
+// The chart is pure TradingView — all data, all candles handled by them
+// Our 2/3 signal only runs during the scan (left panel list), not per chart load
+function loadChart(symbol, name) {
   if (!symbol) return;
-  const base = symbol.trim().toUpperCase().replace(/USDT?$/,'');
+  const base = symbol.trim().toUpperCase().replace(/USDT?$/,'').replace(/USD$/,'');
   currentChartSymbol = base;
   selectedScanTicker = base;
 
   const input = document.getElementById('tv-symbol-input');
   if (input) input.value = base;
+
+  const iv = document.getElementById('tv-interval')?.value || 'D';
+
+  // Update chart label with signal info from scan results if available
+  const sr = scanResults.find(r=>r.symbol===base||r.tvSymbol===base);
   const label = document.getElementById('chart-label');
-  if (label) label.textContent = (name?`${base} · ${name}`:base) + ' — loading…';
-
-  if (!lwChart) initLWChart();
-  if (!lwChart) return;
-
-  // Fetch real OHLC from Binance via Netlify function
-  const candles = await fetchCoinOHLC(base, 365);
-
-  if (!candles || candles.length < 20) {
-    if (label) label.textContent = `${base} — no data (check Netlify functions are deployed)`;
-    return;
-  }
-
-  const ohlc = candles.map(c=>({o:c.open,h:c.high,l:c.low,c:c.close}));
-
-  // Run per-bar 2/3 for candle coloring
-  const perBar = computePerBar2of3(ohlc);
-  const sig    = compute2of3(ohlc);
-
-  // Color candles: green = 2/3 bull, red = 2/3 bear, gray = neutral/persisted
-  const colored = candles.map((c,i)=>{
-    const s = perBar[i]?.barState ?? 0;
-    const col = s===1?'#00cc44': s===-1?'#ff3333':'#5a7a9a';
-    return {time:c.time, open:c.open, high:c.high, low:c.low, close:c.close,
-            color:col, wickColor:col, borderColor:col};
-  });
-  lwCandleSeries.setData(colored);
-
-  // EMA 50 (green) + EMA 100 (red)
-  const closes = candles.map(c=>c.close);
-  const k50=2/51, k100=2/101;
-  let e50=closes.slice(0,50).reduce((a,b)=>a+b,0)/50;
-  let e100=closes.slice(0,100).reduce((a,b)=>a+b,0)/100;
-  const ema50d=[], ema100d=[];
-  for (let i=0;i<candles.length;i++){
-    if(i>=49){  e50=closes[i]*k50+e50*(1-k50);   ema50d.push({time:candles[i].time,value:e50}); }
-    if(i>=99){  e100=closes[i]*k100+e100*(1-k100); ema100d.push({time:candles[i].time,value:e100}); }
-  }
-  lwEma50S.setData(ema50d);
-  lwEma100S.setData(ema100d);
-
-  // Wick High/Low reference lines
-  try {
-    if (sig.wickHigh) lwCandleSeries.createPriceLine({price:sig.wickHigh,color:'#f09030',lineWidth:1,lineStyle:2,title:'Wick High'});
-    if (sig.wickLow)  lwCandleSeries.createPriceLine({price:sig.wickLow, color:'#4a90d8',lineWidth:1,lineStyle:2,title:'Wick Low'});
-  } catch(e){}
-
-  // LONG/SHORT arrows on bar flips
-  const markers = [];
-  for (let i=1;i<candles.length;i++){
-    if (perBar[i]?.flipToGreen) markers.push({time:candles[i].time,position:'belowBar',color:'#00ff44',shape:'arrowUp',text:'L',size:1});
-    else if (perBar[i]?.flipToRed) markers.push({time:candles[i].time,position:'aboveBar',color:'#ff4444',shape:'arrowDown',text:'S',size:1});
-  }
-  if (markers.length) lwCandleSeries.setMarkers(markers);
-
   if (label) {
-    const bias = sig.allThreeBull?'🟢 ALL 3': sig.twoOfThreeBull?'🟢 BULLISH':
-                 sig.allThreeBear?'🔴 ALL 3': sig.twoOfThreeBear?'🔴 BEARISH':'⚪ NEUTRAL';
-    label.textContent=`${name||base} · RSI ${sig.rsi??'--'} · ${bias} (${sig.bull}/3 bull · ${sig.bear}/3 bear)`;
+    if (sr) {
+      const bias = sr.allThreeBull?'🟢 ALL 3 BULL': sr.signal==='long'?'🔺 NEW LONG':
+                   sr.signal==='long_hold'?'🟢 BULLISH': sr.signal==='short'?'🔻 NEW SHORT':
+                   sr.signal==='short_hold'?'🔴 BEARISH':'⚪ NEUTRAL';
+      label.textContent = `${name||base} · ${bias} · RSI ${sr.rsi??'--'} · ${sr.bull}/3 bull`;
+    } else {
+      label.textContent = name ? `${base} · ${name}` : base;
+    }
   }
-  lwChart.timeScale().fitContent();
+
+  const container = document.getElementById('tv-widget-container');
+  if (!container) return;
+
+  // TradingView Advanced Chart iframe
+  // Handles ALL chart data internally — no API calls needed from us
+  // COINBASE has most major crypto pairs; BINANCE as fallback in the widget search
+  const tvSym = encodeURIComponent('COINBASE:' + base + 'USD');
+  const src = `https://www.tradingview.com/widgetembed/?frameElementId=tvframe&symbol=${tvSym}&interval=${iv}&theme=dark&style=1&locale=en&toolbar_bg=%230d1117&hide_top_toolbar=0&allow_symbol_change=1&save_image=0&calendar=0`;
+
+  // Reuse existing iframe if same domain (just change src — avoids full reload flicker)
+  let iframe = container.querySelector('iframe');
+  if (!iframe) {
+    iframe = document.createElement('iframe');
+    iframe.style.cssText = 'width:100%;height:100%;border:none;display:block';
+    iframe.setAttribute('allowfullscreen','');
+    container.innerHTML = '';
+    container.appendChild(iframe);
+  }
+  iframe.src = src;
 }
 
-// Alias so both names work
 function loadTVChart(symbol, name) { return loadChart(symbol, name); }
 
 // Per-bar 2/3 alignment — JS port matching PineScript bar-by-bar logic
